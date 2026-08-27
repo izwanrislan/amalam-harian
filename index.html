@@ -153,7 +153,7 @@
         }, 5000);
     }
     
-    // Send data to Google Sheets - FIXED VERSION
+    // Send data to Google Sheets and verify the response
     async function sendToGoogleSheet(claimData) {
         try {
             console.log("Sending to Google Sheets:", claimData);
@@ -161,15 +161,40 @@
             const response = await fetch(GOOGLE_SHEETS_API_URL, {
                 method: 'POST',
                 headers: { 
-                    'Content-Type': 'text/plain' // Changed from application/json
+                    'Content-Type': 'text/plain;charset=utf-8'
                 },
                 body: JSON.stringify(claimData)
             });
             
-            // For Google Apps Script, we can't read the response in no-cors mode
-            // So we assume success if no error is thrown
-            console.log("Request sent successfully");
-            return { success: true };
+            if(!response.ok) {
+                throw new Error(`Google Sheets returned HTTP ${response.status}`);
+            }
+            
+            const responseText = await response.text();
+            let serverResult = null;
+            
+            if(responseText.trim()) {
+                try {
+                    serverResult = JSON.parse(responseText);
+                } catch(error) {
+                    console.warn("Google Sheets returned a non-JSON response:", responseText);
+                }
+            }
+            
+            if(
+                serverResult &&
+                (serverResult.success === false ||
+                 String(serverResult.status || '').toLowerCase() === 'error')
+            ) {
+                throw new Error(
+                    serverResult.message ||
+                    serverResult.error ||
+                    'Google Sheets rejected the warranty claim.'
+                );
+            }
+            
+            console.log("Google Sheets confirmed the request");
+            return { success: true, data: serverResult };
             
         } catch(error) {
             console.error("Google Sheets error:", error);
@@ -252,7 +277,14 @@
                 items: items
             });
             
-            // Show success message
+            if(!result.success) {
+                throw new Error(
+                    result.error ||
+                    'The warranty claim could not be saved to Google Sheets.'
+                );
+            }
+            
+            // Show success message only after Google Sheets confirms the request
             showStatus(
                 `✓ Warranty claim submitted! Claim ID: ${claimId}. Total items: ${items.length}`, 
                 "success"
@@ -269,7 +301,7 @@
             
         } catch(error) {
             console.error("Submission error:", error);
-            showStatus("Error submitting claim. Data saved locally. Please try again later.", "error");
+            showStatus("Unable to submit your warranty claim. A local backup was saved. Please check your connection and try again.", "error");
         } finally {
             document.getElementById('loadingOverlay').classList.remove('active');
             submitBtn.disabled = false;
